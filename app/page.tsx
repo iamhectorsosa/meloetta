@@ -5,6 +5,14 @@ import { Barline, Formatter, Renderer, Stave, StaveNote, Voice } from "vexflow"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { CountingNumber } from "@/components/ui/counting-number"
+import {
+  Drawer,
+  DrawerContent,
+  DrawerDescription,
+  DrawerHeader,
+  DrawerTitle,
+  DrawerTrigger,
+} from "@/components/ui/drawer"
 import { Progress } from "@/components/ui/progress"
 
 import {
@@ -230,23 +238,6 @@ export default function Page() {
         </p>
       </header>
 
-      <div className="mx-auto">
-        <NativeSelect
-          value={category}
-          onChange={(e) => changeCategory(e.currentTarget.value as Category)}
-        >
-          {PRACTICE_GROUPS.map((group) => (
-            <NativeSelectOptGroup key={group.label} label={group.label}>
-              {group.options.map((opt) => (
-                <NativeSelectOption key={opt.value} value={opt.value}>
-                  {opt.label}
-                </NativeSelectOption>
-              ))}
-            </NativeSelectOptGroup>
-          ))}
-        </NativeSelect>
-      </div>
-
       {!question ? (
         <Button
           size="lg"
@@ -303,6 +294,42 @@ export default function Page() {
           </p>
         </>
       )}
+
+      <Drawer showSwipeHandle>
+        <DrawerTrigger
+          render={
+            <Button variant="ghost" className="mx-auto mt-auto">
+              Settings
+            </Button>
+          }
+        />
+        <DrawerContent>
+          <DrawerHeader>
+            <DrawerTitle>Settings</DrawerTitle>
+            <DrawerDescription>
+              Choose what you want to practice.
+            </DrawerDescription>
+          </DrawerHeader>
+          <div className="flex justify-center p-4 pb-8">
+            <NativeSelect
+              value={category}
+              onChange={(e) =>
+                changeCategory(e.currentTarget.value as Category)
+              }
+            >
+              {PRACTICE_GROUPS.map((group) => (
+                <NativeSelectOptGroup key={group.label} label={group.label}>
+                  {group.options.map((opt) => (
+                    <NativeSelectOption key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelectOptGroup>
+              ))}
+            </NativeSelect>
+          </div>
+        </DrawerContent>
+      </Drawer>
     </main>
   )
 }

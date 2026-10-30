@@ -4,12 +4,21 @@ import { useEffect, useRef, useState } from "react"
 import { Barline, Formatter, Renderer, Stave, StaveNote, Voice } from "vexflow"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
+import { CountingNumber } from "@/components/ui/counting-number"
+import { Progress } from "@/components/ui/progress"
 
 import {
   NativeSelect,
   NativeSelectOptGroup,
   NativeSelectOption,
 } from "@/components/ui/native-select"
+
+// ---------------------------------------------------------------------------
+// XP settings
+// ---------------------------------------------------------------------------
+
+const XP_PER_ANSWER = 10
+const XP_PER_BAR = 100 // the bar fills every 100 XP, then starts over
 
 // ---------------------------------------------------------------------------
 // Notes: single source of truth
@@ -147,6 +156,7 @@ export default function Page() {
   const staffRef = useRef<HTMLDivElement>(null)
   const [category, setCategory] = useState<Category>("all")
   const [question, setQuestion] = useState<Question | null>(null)
+  const [xp, setXp] = useState(0)
   const [feedback, setFeedback] = useState<{
     selected: string
     correct: boolean
@@ -202,8 +212,13 @@ export default function Page() {
     const correct = selected === question.note
     setFeedback({ selected, correct })
     if (correct) {
+      // +10 XP (total keeps growing; only the bar wraps around)
+      setXp((prev) => prev + XP_PER_ANSWER)
       setQuestion(newQuestion(category, question.note))
       setFeedback(null)
+    } else {
+      // -10 XP, never below 0
+      setXp((prev) => Math.max(0, prev - XP_PER_ANSWER))
     }
   }
 
@@ -242,6 +257,15 @@ export default function Page() {
         </Button>
       ) : (
         <>
+          <div className="flex flex-col gap-y-1">
+            <CountingNumber
+              className="ml-auto text-xl font-semibold tracking-tight text-muted-foreground"
+              grouping
+              value={xp}
+            />
+            <Progress value={xp % XP_PER_BAR} className="w-full" />
+          </div>
+
           <Card className="flex min-h-48 items-center justify-center overflow-hidden p-4">
             <div
               ref={staffRef}

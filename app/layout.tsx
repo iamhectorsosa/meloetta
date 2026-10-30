@@ -12,6 +12,22 @@ const chelsea = Chelsea_Market({
 
 const baseUrl = "https://meloettaapp.vercel.app"
 
+// npx pwa-asset-generator ./assets/logo.svg ./public/icons \
+//   --background "#fcfefd" \
+//   --padding "0" \
+//   --icon-only \
+//   --favicon \
+//   --type png \
+//   --opaque true
+
+// npx pwa-asset-generator ./assets/logo.svg ./public/splash \
+//   --background "#fcfefd" \
+//   --splash-only \
+//   --portrait-only \
+//   --padding "30%" \
+//   --type png \
+//   --opaque true
+
 // [cssWidth, cssHeight, pixelRatio] -> file: apple-splash-{w*dpr}-{h*dpr}.png
 const splashDevices: [number, number, number][] = [
   // iPhones @3x

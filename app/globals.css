@@ -107,3 +107,34 @@
 [data-slot="progress-track"] {
   height: 0.625rem;
 }
+
+/* components/ui/ripple-button.tsx */
+
+@theme inline {
+  --animate-ripple-button: ripple-button var(--ripple-button-duration, 600ms)
+    ease-out;
+  --animate-ripple-button-again: ripple-button-again
+    var(--ripple-button-duration, 600ms) ease-out;
+}
+
+@keyframes ripple-button {
+  from {
+    opacity: 0.35;
+    scale: 0;
+  }
+  to {
+    opacity: 0;
+    scale: 1;
+  }
+}
+
+@keyframes ripple-button-again {
+  from {
+    opacity: 0.35;
+    scale: 0;
+  }
+  to {
+    opacity: 0;
+    scale: 1;
+  }
+}

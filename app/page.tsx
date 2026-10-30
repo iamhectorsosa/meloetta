@@ -2,12 +2,10 @@
 
 import { useEffect, useRef, useState } from "react"
 import { Barline, Formatter, Renderer, Stave, StaveNote, Voice } from "vexflow"
-import { Button } from "@/components/ui/button"
 import { CountingNumber } from "@/components/ui/counting-number"
 import {
   Drawer,
   DrawerContent,
-  DrawerDescription,
   DrawerHeader,
   DrawerTitle,
   DrawerTrigger,
@@ -19,6 +17,7 @@ import {
   NativeSelectOptGroup,
   NativeSelectOption,
 } from "@/components/ui/native-select"
+import { RippleButton } from "@/components/ui/ripple-button"
 
 // ---------------------------------------------------------------------------
 // XP settings
@@ -238,13 +237,13 @@ export default function Page() {
       </header>
 
       {!question ? (
-        <Button
+        <RippleButton
           size="lg"
           className="mx-auto"
           onClick={() => setQuestion(newQuestion(category))}
         >
           Start
-        </Button>
+        </RippleButton>
       ) : (
         <>
           <div className="flex flex-col gap-y-1">
@@ -263,7 +262,7 @@ export default function Page() {
 
           <div className="grid grid-cols-3 gap-3">
             {question.choices.map((choice) => (
-              <Button
+              <RippleButton
                 key={choice}
                 variant={
                   feedback?.selected === choice && !feedback.correct
@@ -271,11 +270,11 @@ export default function Page() {
                     : "outline"
                 }
                 size="lg"
-                className="h-16 text-xl"
+                className="h-16 text-xl active:scale-95"
                 onClick={() => answer(choice)}
               >
                 {label(choice)}
-              </Button>
+              </RippleButton>
             ))}
           </div>
 
@@ -295,9 +294,9 @@ export default function Page() {
       <Drawer showSwipeHandle>
         <DrawerTrigger
           render={
-            <Button variant="ghost" size="lg" className="mx-auto mt-auto">
+            <RippleButton variant="ghost" size="lg" className="mx-auto mt-auto">
               Settings
-            </Button>
+            </RippleButton>
           }
         />
         <DrawerContent>

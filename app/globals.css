@@ -100,7 +100,7 @@
     background-color: var(--background);
     background-image:
       radial-gradient(
-        circle at 15% -10%,
+        circle at 15% 100%,
         oklch(0.96 0.03 165 / 0.8) 0%,
         transparent 55%
       ),

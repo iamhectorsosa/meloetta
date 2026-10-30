@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState } from "react"
 import { Barline, Formatter, Renderer, Stave, StaveNote, Voice } from "vexflow"
 import { Button } from "@/components/ui/button"
-import { Card } from "@/components/ui/card"
 import { CountingNumber } from "@/components/ui/counting-number"
 import {
   Drawer,
@@ -257,12 +256,10 @@ export default function Page() {
             <Progress value={xp % XP_PER_BAR} className="w-full" />
           </div>
 
-          <Card className="flex min-h-48 items-center justify-center overflow-hidden p-4">
-            <div
-              ref={staffRef}
-              className="w-full [&_svg]:mx-auto [&_svg]:max-w-full"
-            />
-          </Card>
+          <div
+            ref={staffRef}
+            className="w-full [&_svg]:mx-auto [&_svg]:max-w-full"
+          />
 
           <div className="grid grid-cols-3 gap-3">
             {question.choices.map((choice) => (

@@ -25,8 +25,10 @@ const XP_PER_ANSWER = 10
 const XP_PER_BAR = 100 // the bar fills every 100 XP, then starts over
 
 // ---------------------------------------------------------------------------
-// Notes: single source of truth
+// Notes: single source of truth (one list per clef)
 // ---------------------------------------------------------------------------
+
+type Clef = "treble" | "bass"
 
 type Note = {
   key: string // VexFlow key, e.g. "e/4"
@@ -34,7 +36,7 @@ type Note = {
   position: "line" | "space" // whether it sits on a line or in a space
 }
 
-const NOTES: Note[] = [
+const NOTES_TREBLE: Note[] = [
   // Below the staff
   { key: "g/3", region: "below", position: "space" }, // Below the 2nd ledger line
   { key: "a/3", region: "below", position: "line" }, // 2nd ledger line
@@ -62,6 +64,47 @@ const NOTES: Note[] = [
   { key: "e/6", region: "above", position: "line" }, // 3rd ledger line
   { key: "f/6", region: "above", position: "space" }, // Above the 3rd ledger line
   { key: "g/6", region: "above", position: "line" }, // 4th ledger line
+]
+
+// Mirrors the treble layout: 5 notes below, 9 on the staff, 8 above.
+const NOTES_BASS: Note[] = [
+  // Below the staff
+  { key: "b/1", region: "below", position: "space" }, // Below the 2nd ledger line
+  { key: "c/2", region: "below", position: "line" }, // 2nd ledger line
+  { key: "d/2", region: "below", position: "space" }, // Below the 1st ledger line
+  { key: "e/2", region: "below", position: "line" }, // 1st ledger line
+  { key: "f/2", region: "below", position: "space" }, // Just below the staff
+
+  // On the staff
+  { key: "g/2", region: "staff", position: "line" }, // 1st line - 'G'ood
+  { key: "a/2", region: "staff", position: "space" }, // 1st space - 'A'
+  { key: "b/2", region: "staff", position: "line" }, // 2nd line - 'B'oys
+  { key: "c/3", region: "staff", position: "space" }, // 2nd space - 'C'
+  { key: "d/3", region: "staff", position: "line" }, // 3rd line - 'D'o
+  { key: "e/3", region: "staff", position: "space" }, // 3rd space - 'E'
+  { key: "f/3", region: "staff", position: "line" }, // 4th line - 'F'ine
+  { key: "g/3", region: "staff", position: "space" }, // 4th space - 'G'
+  { key: "a/3", region: "staff", position: "line" }, // 5th line - 'A'lways
+
+  // Above the staff
+  { key: "b/3", region: "above", position: "space" }, // Just above the staff
+  { key: "c/4", region: "above", position: "line" }, // 1st ledger line (Middle C)
+  { key: "d/4", region: "above", position: "space" }, // Above the 1st ledger line
+  { key: "e/4", region: "above", position: "line" }, // 2nd ledger line
+  { key: "f/4", region: "above", position: "space" }, // Above the 2nd ledger line
+  { key: "g/4", region: "above", position: "line" }, // 3rd ledger line
+  { key: "a/4", region: "above", position: "space" }, // Above the 3rd ledger line
+  { key: "b/4", region: "above", position: "line" }, // 4th ledger line
+]
+
+const NOTES_BY_CLEF: Record<Clef, Note[]> = {
+  treble: NOTES_TREBLE,
+  bass: NOTES_BASS,
+}
+
+const CLEF_OPTIONS: { value: Clef; label: string }[] = [
+  { value: "treble", label: "Treble clef" },
+  { value: "bass", label: "Bass clef" },
 ]
 
 // ---------------------------------------------------------------------------
@@ -118,9 +161,11 @@ const PRACTICE_GROUPS: { label: string; options: PracticeOption[] }[] = [
 
 const ALL_OPTIONS = PRACTICE_GROUPS.flatMap((g) => g.options)
 
-const notePool = (category: Category) => {
+const notePool = (category: Category, clef: Clef) => {
   const option = ALL_OPTIONS.find((o) => o.value === category)
-  return NOTES.filter(option?.match ?? (() => true)).map((n) => n.key)
+  return NOTES_BY_CLEF[clef]
+    .filter(option?.match ?? (() => true))
+    .map((n) => n.key)
 }
 
 // ---------------------------------------------------------------------------
@@ -142,8 +187,12 @@ const shuffle = <T,>(items: T[]) => {
   return a
 }
 
-const newQuestion = (category: Category, previous?: string): Question => {
-  const pool = notePool(category)
+const newQuestion = (
+  category: Category,
+  clef: Clef,
+  previous?: string
+): Question => {
+  const pool = notePool(category, clef)
   const candidates = pool.filter((n) => n !== previous)
   const note = candidates[Math.floor(Math.random() * candidates.length)]
   return {
@@ -161,6 +210,7 @@ const newQuestion = (category: Category, previous?: string): Question => {
 
 export default function Page() {
   const staffRef = useRef<HTMLDivElement>(null)
+  const [clef, setClef] = useState<Clef>("treble")
   const [category, setCategory] = useState<Category>("all")
   const [question, setQuestion] = useState<Question | null>(null)
   const [xp, setXp] = useState(0)
@@ -189,13 +239,13 @@ export default function Page() {
     const renderer = new Renderer(el, Renderer.Backends.SVG)
     renderer.resize(W, H)
     const ctx = renderer.getContext()
-    const stave = new Stave(0, 12, W - 2).addClef("treble")
+    const stave = new Stave(0, 12, W - 2).addClef(clef)
     stave.setContext(ctx).draw()
 
     const note = new StaveNote({
       keys: [question.note],
       duration: "w",
-      clef: "treble",
+      clef,
     })
     const voice = new Voice({ numBeats: 4, beatValue: 4 }).addTickable(note)
     const formatWidth = stave.getNoteEndX() - stave.getNoteStartX() - 10
@@ -212,13 +262,21 @@ export default function Page() {
       svg.style.height = "100%"
       svg.style.opacity = "85%"
     }
-  }, [question])
+  }, [question, clef])
+
+  function changeClef(next: Clef) {
+    if (next === clef) return
+    setClef(next)
+    setFeedback(null)
+    // If a session is already running, switch to the new clef immediately
+    if (question) setQuestion(newQuestion(category, next, question.note))
+  }
 
   function changeCategory(next: Category) {
     setCategory(next)
     setFeedback(null)
     // If a session is already running, switch to the new pool immediately
-    if (question) setQuestion(newQuestion(next, question.note))
+    if (question) setQuestion(newQuestion(next, clef, question.note))
   }
 
   function answer(selected: string) {
@@ -228,7 +286,7 @@ export default function Page() {
     if (correct) {
       // +10 XP (total keeps growing; only the bar wraps around)
       setXp((prev) => prev + XP_PER_ANSWER)
-      setQuestion(newQuestion(category, question.note))
+      setQuestion(newQuestion(category, clef, question.note))
       setFeedback(null)
     } else {
       // -10 XP, never below 0
@@ -259,21 +317,23 @@ export default function Page() {
           <DrawerContent>
             <DrawerHeader className="pb-2">
               <DrawerTitle className="text-xl">Practice set</DrawerTitle>
-              <DrawerDescription>Choose which notes you see.</DrawerDescription>
+              <DrawerDescription>
+                Choose a clef and which notes you see.
+              </DrawerDescription>
             </DrawerHeader>
-            <div
-              role="radiogroup"
-              aria-label="Practice set"
-              className="flex flex-col gap-5 px-4 pt-2 pb-[max(2rem,env(safe-area-inset-bottom))]"
-            >
-              {PRACTICE_GROUPS.map((group) => (
-                <section key={group.label}>
+            <div className="flex-1 overflow-y-auto p-4">
+              <div className="flex flex-col gap-5 px-4 pt-2 pb-[max(2rem,env(safe-area-inset-bottom))]">
+                <section>
                   <h3 className="mb-2 px-1 text-sm font-medium text-muted-foreground">
-                    {group.label}
+                    Clef
                   </h3>
-                  <div className="flex flex-col gap-1.5">
-                    {group.options.map((opt) => {
-                      const selected = opt.value === category
+                  <div
+                    role="radiogroup"
+                    aria-label="Clef"
+                    className="flex flex-col gap-1.5"
+                  >
+                    {CLEF_OPTIONS.map((opt) => {
+                      const selected = opt.value === clef
                       return (
                         <Button
                           key={opt.value}
@@ -284,7 +344,7 @@ export default function Page() {
                             "h-12 w-full justify-between rounded-xl px-4 text-base",
                             selected && "border-primary bg-accent"
                           )}
-                          onClick={() => changeCategory(opt.value)}
+                          onClick={() => changeClef(opt.value)}
                         >
                           {opt.label}
                           {selected && (
@@ -298,7 +358,47 @@ export default function Page() {
                     })}
                   </div>
                 </section>
-              ))}
+
+                <div
+                  role="radiogroup"
+                  aria-label="Note range"
+                  className="flex flex-col gap-5"
+                >
+                  {PRACTICE_GROUPS.map((group) => (
+                    <section key={group.label}>
+                      <h3 className="mb-2 px-1 text-sm font-medium text-muted-foreground">
+                        {group.label}
+                      </h3>
+                      <div className="flex flex-col gap-1.5">
+                        {group.options.map((opt) => {
+                          const selected = opt.value === category
+                          return (
+                            <Button
+                              key={opt.value}
+                              role="radio"
+                              aria-checked={selected}
+                              variant="outline"
+                              className={cn(
+                                "h-12 w-full justify-between rounded-xl px-4 text-base",
+                                selected && "border-primary bg-accent"
+                              )}
+                              onClick={() => changeCategory(opt.value)}
+                            >
+                              {opt.label}
+                              {selected && (
+                                <CheckIcon
+                                  aria-hidden="true"
+                                  className="size-5 text-primary-foreground"
+                                />
+                              )}
+                            </Button>
+                          )
+                        })}
+                      </div>
+                    </section>
+                  ))}
+                </div>
+              </div>
             </div>
           </DrawerContent>
         </Drawer>
@@ -326,7 +426,7 @@ export default function Page() {
           <div
             ref={staffRef}
             role="img"
-            aria-label="Treble clef staff showing one note"
+            aria-label={`${clef === "treble" ? "Treble" : "Bass"} clef staff showing one note`}
             className="relative z-10 h-full w-full max-w-[20rem] [&_svg]:mx-auto [&_svg]:h-full [&_svg]:max-w-full"
           />
         ) : (
@@ -334,7 +434,7 @@ export default function Page() {
             <RippleButton
               size="lg"
               className="h-16 w-56 text-xl"
-              onClick={() => setQuestion(newQuestion(category))}
+              onClick={() => setQuestion(newQuestion(category, clef))}
             >
               Start
             </RippleButton>

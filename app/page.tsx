@@ -2,16 +2,20 @@
 
 import { useEffect, useRef, useState } from "react"
 import VexFlow, { Formatter, Renderer, Stave, StaveNote, Voice } from "vexflow"
+import { CheckIcon, SettingsIcon } from "lucide-react"
+import { Button } from "@/components/ui/button"
 import { CountingNumber } from "@/components/ui/counting-number"
-import { Drawer, DrawerContent, DrawerTrigger } from "@/components/ui/drawer"
-import { Progress } from "@/components/ui/progress"
-
 import {
-  NativeSelect,
-  NativeSelectOptGroup,
-  NativeSelectOption,
-} from "@/components/ui/native-select"
+  Drawer,
+  DrawerContent,
+  DrawerDescription,
+  DrawerHeader,
+  DrawerTitle,
+  DrawerTrigger,
+} from "@/components/ui/drawer"
+import { Progress } from "@/components/ui/progress"
 import { RippleButton } from "@/components/ui/ripple-button"
+import { cn } from "@/lib/utils"
 
 // ---------------------------------------------------------------------------
 // XP settings
@@ -77,20 +81,20 @@ const PRACTICE_GROUPS: { label: string; options: PracticeOption[] }[] = [
   {
     label: "Advanced",
     options: [
-      { value: "all", label: "Full Range", match: () => true },
+      { value: "all", label: "Full range", match: () => true },
       {
         value: "staff",
-        label: "On the Staff",
+        label: "On the staff",
         match: (n) => n.region === "staff",
       },
       {
         value: "below_staff",
-        label: "Ledger Lines Below",
+        label: "Ledger lines below",
         match: (n) => n.region === "below",
       },
       {
         value: "above_staff",
-        label: "Ledger Lines Above",
+        label: "Ledger lines above",
         match: (n) => n.region === "above",
       },
     ],
@@ -125,7 +129,10 @@ const notePool = (category: Category) => {
 
 type Question = { note: string; choices: string[] }
 
-const label = (key: string) => key.replace("/", "").toUpperCase()
+/** "e/5" -> "E" and "5" */
+const letterOf = (key: string) => key[0].toUpperCase()
+const octaveOf = (key: string) => key.slice(2)
+
 const shuffle = <T,>(items: T[]) => {
   const a = [...items]
   for (let i = a.length - 1; i > 0; i--) {
@@ -203,6 +210,7 @@ export default function Page() {
       svg.removeAttribute("height")
       svg.style.width = "100%"
       svg.style.height = "100%"
+      svg.style.opacity = "85%"
     }
   }, [question])
 
@@ -229,91 +237,140 @@ export default function Page() {
   }
 
   return (
-    <main className="mx-auto flex h-dvh max-w-md flex-col gap-6 overflow-hidden bg-background px-5 py-10 text-foreground">
-      <header className="text-center">
-        <h1 className="text-sm font-semibold text-primary-foreground">
-          Practice Treble Clef
+    <main className="mx-auto flex h-dvh max-w-md flex-col gap-6 overflow-hidden px-5 py-10 text-foreground">
+      <header className="flex shrink-0 items-center justify-between gap-3 pb-4">
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground underline decoration-primary decoration-wavy decoration-2 underline-offset-4">
+          Meloetta
         </h1>
-      </header>
 
-      {!question ? (
-        <div className="flex min-h-0 flex-1 items-center justify-center">
-          <RippleButton
-            size="lg"
-            onClick={() => setQuestion(newQuestion(category))}
-          >
-            Start
-          </RippleButton>
-        </div>
-      ) : (
-        <>
-          <div className="flex shrink-0 flex-col gap-y-1">
-            <CountingNumber
-              className="ml-auto text-xl font-semibold tracking-tight text-muted-foreground"
-              grouping
-              value={xp}
-            />
-            <Progress value={xp % XP_PER_BAR} className="w-full" />
-          </div>
-
-          <div
-            ref={staffRef}
-            className="min-h-0 flex-1 [&_svg]:mx-auto [&_svg]:h-full [&_svg]:max-w-full"
-          />
-
-          <div className="grid grid-cols-3 gap-3">
-            {question.choices.map((choice) => (
+        <Drawer showSwipeHandle>
+          <DrawerTrigger
+            render={
               <RippleButton
-                key={choice}
-                variant={
-                  feedback?.selected === choice && !feedback.correct
-                    ? "destructive"
-                    : "outline"
-                }
-                size="lg"
-                className="h-16 text-xl active:scale-95"
-                onClick={() => answer(choice)}
+                variant="ghost"
+                size="icon-lg"
+                className="size-11 shrink-0 rounded-full"
+                aria-label="Settings"
               >
-                {label(choice)}
+                <SettingsIcon className="size-5" />
               </RippleButton>
-            ))}
-          </div>
-        </>
-      )}
-
-      <Drawer showSwipeHandle>
-        <DrawerTrigger
-          render={
-            <RippleButton
-              variant="ghost"
-              size="lg"
-              className="mx-auto mt-auto shrink-0"
-            >
-              Settings
-            </RippleButton>
-          }
-        />
-        <DrawerContent>
-          <div className="flex justify-center p-4 pb-8">
-            <NativeSelect
-              value={category}
-              onChange={(e) =>
-                changeCategory(e.currentTarget.value as Category)
-              }
+            }
+          />
+          <DrawerContent>
+            <DrawerHeader className="pb-2">
+              <DrawerTitle className="text-xl">Practice set</DrawerTitle>
+              <DrawerDescription>Choose which notes you see.</DrawerDescription>
+            </DrawerHeader>
+            <div
+              role="radiogroup"
+              aria-label="Practice set"
+              className="flex flex-col gap-5 px-4 pt-2 pb-[max(2rem,env(safe-area-inset-bottom))]"
             >
               {PRACTICE_GROUPS.map((group) => (
-                <NativeSelectOptGroup key={group.label} label={group.label}>
-                  {group.options.map((opt) => (
-                    <NativeSelectOption key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </NativeSelectOption>
-                  ))}
-                </NativeSelectOptGroup>
+                <section key={group.label}>
+                  <h3 className="mb-2 px-1 text-sm font-medium text-muted-foreground">
+                    {group.label}
+                  </h3>
+                  <div className="flex flex-col gap-1.5">
+                    {group.options.map((opt) => {
+                      const selected = opt.value === category
+                      return (
+                        <Button
+                          key={opt.value}
+                          role="radio"
+                          aria-checked={selected}
+                          variant="outline"
+                          className={cn(
+                            "h-12 w-full justify-between rounded-xl px-4 text-base",
+                            selected && "border-primary bg-accent"
+                          )}
+                          onClick={() => changeCategory(opt.value)}
+                        >
+                          {opt.label}
+                          {selected && (
+                            <CheckIcon
+                              aria-hidden="true"
+                              className="size-5 text-primary-foreground"
+                            />
+                          )}
+                        </Button>
+                      )
+                    })}
+                  </div>
+                </section>
               ))}
-            </NativeSelect>
+            </div>
+          </DrawerContent>
+        </Drawer>
+      </header>
+
+      {/* HUD: always visible so nothing jumps when the game starts ----------- */}
+      <section aria-label="Progress" className="flex shrink-0 flex-col gap-2">
+        <div className="ml-auto flex items-baseline gap-1 text-muted-foreground">
+          <CountingNumber
+            className="text-3xl font-semibold tracking-tight"
+            grouping
+            value={xp}
+          />
+          <span className="text-sm font-medium">XP</span>
+        </div>
+        <Progress
+          value={xp % XP_PER_BAR}
+          aria-label="Experience toward the next 100"
+          className="w-full"
+        />
+      </section>
+
+      <div className="relative flex min-h-0 flex-1 items-center justify-center">
+        {question ? (
+          <div
+            ref={staffRef}
+            role="img"
+            aria-label="Treble clef staff showing one note"
+            className="relative z-10 h-full w-full max-w-[20rem] [&_svg]:mx-auto [&_svg]:h-full [&_svg]:max-w-full"
+          />
+        ) : (
+          <div className="relative z-10 flex flex-col items-center gap-6">
+            <RippleButton
+              size="lg"
+              className="h-16 w-56 text-xl"
+              onClick={() => setQuestion(newQuestion(category))}
+            >
+              Start
+            </RippleButton>
+            <p className="text-muted-foreground">Name the note you see.</p>
           </div>
-        </DrawerContent>
-      </Drawer>
+        )}
+      </div>
+
+      <div className="min-h-20 shrink-0 [@media(max-height:700px)]:min-h-16">
+        {question && (
+          <div className="grid grid-cols-3 gap-3">
+            {question.choices.map((choice) => {
+              const wrong = feedback?.selected === choice
+              return (
+                <RippleButton
+                  key={choice}
+                  size="lg"
+                  variant={wrong ? "destructive" : "outline"}
+                  aria-label={`${letterOf(choice)}, octave ${octaveOf(choice)}`}
+                  className="h-20 border-2 px-0 active:scale-95 [@media(max-height:700px)]:h-16"
+                  onClick={() => answer(choice)}
+                >
+                  <span className="flex items-baseline gap-0.5">
+                    <span className="text-4xl font-semibold">
+                      {letterOf(choice)}
+                    </span>
+                    <span className="font-medium opacity-60">
+                      {octaveOf(choice)}
+                    </span>
+                  </span>
+                </RippleButton>
+              )
+            })}
+          </div>
+        )}
+      </div>
     </main>
   )
 }

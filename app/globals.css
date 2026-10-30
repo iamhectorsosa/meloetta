@@ -96,7 +96,19 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply text-foreground;
+    background-color: var(--background);
+    background-image:
+      radial-gradient(
+        circle at 15% -10%,
+        oklch(0.96 0.03 165 / 0.8) 0%,
+        transparent 55%
+      ),
+      radial-gradient(oklch(0.92 0.025 165 / 0.45) 1px, transparent 1.5px);
+    background-size:
+      auto,
+      22px 22px;
+    background-attachment: fixed;
   }
   html {
     @apply font-sans;
@@ -105,7 +117,7 @@
 
 /* Optional: a chunkier XP bar. Unlayered so it beats the h-1 utility. */
 [data-slot="progress-track"] {
-  height: 0.625rem;
+  height: 0.8rem;
 }
 
 /* components/ui/ripple-button.tsx */

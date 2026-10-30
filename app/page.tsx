@@ -232,9 +232,9 @@ export default function Page() {
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col space-y-6 bg-background px-5 py-10 text-foreground">
       <header className="text-center">
-        <p className="text-xs font-semibold tracking-widest text-muted-foreground uppercase">
+        <h1 className="text-xs font-semibold tracking-widest text-muted-foreground uppercase">
           Treble Clef Practice
-        </p>
+        </h1>
       </header>
 
       {!question ? (
@@ -295,17 +295,16 @@ export default function Page() {
       <Drawer showSwipeHandle>
         <DrawerTrigger
           render={
-            <Button variant="ghost" className="mx-auto mt-auto">
+            <Button variant="ghost" size="lg" className="mx-auto mt-auto">
               Settings
             </Button>
           }
         />
         <DrawerContent>
           <DrawerHeader>
-            <DrawerTitle>Settings</DrawerTitle>
-            <DrawerDescription>
-              Choose what you want to practice.
-            </DrawerDescription>
+            <DrawerTitle className="text-xs font-semibold tracking-widest text-muted-foreground uppercase">
+              Settings
+            </DrawerTitle>
           </DrawerHeader>
           <div className="flex justify-center p-4 pb-8">
             <NativeSelect

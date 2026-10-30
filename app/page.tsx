@@ -1,15 +1,9 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { Barline, Formatter, Renderer, Stave, StaveNote, Voice } from "vexflow"
+import VexFlow, { Formatter, Renderer, Stave, StaveNote, Voice } from "vexflow"
 import { CountingNumber } from "@/components/ui/counting-number"
-import {
-  Drawer,
-  DrawerContent,
-  DrawerHeader,
-  DrawerTitle,
-  DrawerTrigger,
-} from "@/components/ui/drawer"
+import { Drawer, DrawerContent, DrawerTrigger } from "@/components/ui/drawer"
 import { Progress } from "@/components/ui/progress"
 
 import {
@@ -169,21 +163,26 @@ export default function Page() {
   } | null>(null)
 
   useEffect(() => {
+    async function loadFonts() {
+      await VexFlow.loadFonts("Finale Jazz") // fonts for text and music
+      VexFlow.setFonts("Finale Jazz")
+    }
+    loadFonts()
+  }, [])
+
+  useEffect(() => {
     const el = staffRef.current
     if (!el || !question) return
     el.innerHTML = ""
 
     // Squarish logical size
-    const W = 160
-    const H = 140
+    const W = 100
+    const H = 150
 
     const renderer = new Renderer(el, Renderer.Backends.SVG)
     renderer.resize(W, H)
     const ctx = renderer.getContext()
-    const stave = new Stave(0, 12, W - 2)
-      .addClef("treble")
-      .addTimeSignature("4/4")
-      .setEndBarType(Barline.type.END)
+    const stave = new Stave(0, 12, W - 2).addClef("treble")
     stave.setContext(ctx).draw()
 
     const note = new StaveNote({
@@ -199,10 +198,11 @@ export default function Page() {
     const svg = el.querySelector("svg")
     if (svg) {
       svg.setAttribute("viewBox", `0 0 ${W} ${H}`)
+      svg.setAttribute("preserveAspectRatio", "xMidYMid meet")
       svg.removeAttribute("width")
       svg.removeAttribute("height")
       svg.style.width = "100%"
-      svg.style.height = "auto"
+      svg.style.height = "100%"
     }
   }, [question])
 
@@ -229,24 +229,25 @@ export default function Page() {
   }
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-md flex-col space-y-6 bg-background px-5 py-10 text-foreground">
+    <main className="mx-auto flex h-dvh max-w-md flex-col gap-6 overflow-hidden bg-background px-5 py-10 text-foreground">
       <header className="text-center">
-        <h1 className="text-xs font-semibold tracking-widest text-muted-foreground uppercase">
-          Treble Clef Practice
+        <h1 className="text-sm font-semibold text-primary-foreground">
+          Practice Treble Clef
         </h1>
       </header>
 
       {!question ? (
-        <RippleButton
-          size="lg"
-          className="mx-auto"
-          onClick={() => setQuestion(newQuestion(category))}
-        >
-          Start
-        </RippleButton>
+        <div className="flex min-h-0 flex-1 items-center justify-center">
+          <RippleButton
+            size="lg"
+            onClick={() => setQuestion(newQuestion(category))}
+          >
+            Start
+          </RippleButton>
+        </div>
       ) : (
         <>
-          <div className="flex flex-col gap-y-1">
+          <div className="flex shrink-0 flex-col gap-y-1">
             <CountingNumber
               className="ml-auto text-xl font-semibold tracking-tight text-muted-foreground"
               grouping
@@ -257,7 +258,7 @@ export default function Page() {
 
           <div
             ref={staffRef}
-            className="w-full [&_svg]:mx-auto [&_svg]:max-w-full"
+            className="min-h-0 flex-1 [&_svg]:mx-auto [&_svg]:h-full [&_svg]:max-w-full"
           />
 
           <div className="grid grid-cols-3 gap-3">
@@ -277,34 +278,22 @@ export default function Page() {
               </RippleButton>
             ))}
           </div>
-
-          <p
-            className="mt-5 min-h-6 text-center text-sm text-muted-foreground"
-            aria-live="polite"
-          >
-            {feedback?.correct
-              ? "Correct!"
-              : feedback
-                ? "Not quite. Try again!"
-                : ""}
-          </p>
         </>
       )}
 
       <Drawer showSwipeHandle>
         <DrawerTrigger
           render={
-            <RippleButton variant="ghost" size="lg" className="mx-auto mt-auto">
+            <RippleButton
+              variant="ghost"
+              size="lg"
+              className="mx-auto mt-auto shrink-0"
+            >
               Settings
             </RippleButton>
           }
         />
         <DrawerContent>
-          <DrawerHeader>
-            <DrawerTitle className="text-xs font-semibold tracking-widest text-muted-foreground uppercase">
-              Settings
-            </DrawerTitle>
-          </DrawerHeader>
           <div className="flex justify-center p-4 pb-8">
             <NativeSelect
               value={category}

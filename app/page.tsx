@@ -10,6 +10,7 @@ import {
 } from "react"
 import VexFlow, { Formatter, Renderer, Stave, StaveNote, Voice } from "vexflow"
 import {
+  BadgeCheckIcon,
   CheckIcon,
   EighthNoteIcon,
   MidiPortIcon,
@@ -36,6 +37,7 @@ import { cn } from "@/lib/utils"
 
 const XP_PER_ANSWER = 10
 const XP_PER_BAR = 100 // the bar fills every 100 XP, then starts over
+const DAILY_GOAL_XP = 1000 // reaching this in a day earns the "Practiced today" badge
 
 const STAFF_WIDTH = 100
 const STAFF_HEIGHT = 150
@@ -347,6 +349,9 @@ const maxScoreKey = (clef: Clef, category: Category) =>
 // Last-used settings: a single key, value is "<clef>:<category>"
 const SETTINGS_KEY = "app@meloetta:settings"
 
+// Daily XP: a single key, value is "<local YYYY-MM-DD>:<xp earned that day>"
+const DAILY_KEY = "app@meloetta:daily"
+
 const parseSettings = (raw: string | null) => {
   const [clef, category] = (raw ?? "").split(":")
   return {
@@ -360,6 +365,20 @@ const parseScore = (raw: string | null) => {
   return Number.isFinite(parsed) ? parsed : 0
 }
 
+/** Local calendar date, so "today" matches the user's own midnight. */
+const localDateKey = () => {
+  const d = new Date()
+  const month = String(d.getMonth() + 1).padStart(2, "0")
+  const day = String(d.getDate()).padStart(2, "0")
+  return `${d.getFullYear()}-${month}-${day}`
+}
+
+/** XP earned on `today`. A stored value from any other day counts as 0. */
+const parseDailyXp = (raw: string | null, today: string) => {
+  const [date, xp] = (raw ?? "").split(":")
+  return date === today ? parseScore(xp ?? null) : 0
+}
+
 /* --- Writers ------------------------------------------------------------ */
 
 const writeSettings = (clef: Clef, category: Category) =>
@@ -367,6 +386,13 @@ const writeSettings = (clef: Clef, category: Category) =>
 
 const writeMaxScore = (clef: Clef, category: Category, score: number) =>
   writeStorage(maxScoreKey(clef, category), String(score))
+
+/** Reads storage at write time, so other tabs' progress isn't overwritten. */
+const addDailyXp = (delta: number) => {
+  const today = localDateKey()
+  const current = parseDailyXp(readStorage(DAILY_KEY), today)
+  writeStorage(DAILY_KEY, `${today}:${current + delta}`)
+}
 
 /* ==========================================================================
  * 5. MIDI
@@ -516,6 +542,16 @@ function useMaxScore(clef: Clef, category: Category): number {
   return parseScore(raw)
 }
 
+/** XP earned today across all runs. Derived from storage; 0 on server/hydration. */
+function useDailyXp(): number {
+  const raw = useSyncExternalStore(
+    subscribeToStorage,
+    () => readStorage(DAILY_KEY),
+    () => null
+  )
+  return parseDailyXp(raw, localDateKey())
+}
+
 /** Loads the VexFlow music font once. */
 function useVexFlowFonts() {
   useEffect(() => {
@@ -541,6 +577,9 @@ type GameState = {
   xp: number
   // Set when the user picks a wrong answer; holds the choice they clicked
   wrongChoice: string | null
+  // Lifetime XP earned this page session. Never resets, so the daily total
+  // can be fed by its increases even when `xp` resets.
+  earned: number
 }
 
 type GameAction =
@@ -549,7 +588,12 @@ type GameAction =
   | { type: "retry"; clef: Clef; category: Category }
   | { type: "settingsChanged"; clef: Clef; category: Category }
 
-const INITIAL_GAME: GameState = { question: null, xp: 0, wrongChoice: null }
+const INITIAL_GAME: GameState = {
+  question: null,
+  xp: 0,
+  wrongChoice: null,
+  earned: 0,
+}
 
 // Note: newQuestion uses Math.random, so this reducer isn't strictly pure.
 // In Strict Mode dev, React may call it twice and keep one result, which is
@@ -561,6 +605,7 @@ function gameReducer(state: GameState, action: GameAction): GameState {
         question: newQuestion(action.category, action.clef),
         xp: 0,
         wrongChoice: null,
+        earned: state.earned,
       }
 
     case "settingsChanged":
@@ -571,6 +616,7 @@ function gameReducer(state: GameState, action: GameAction): GameState {
           : null,
         xp: 0,
         wrongChoice: null,
+        earned: state.earned,
       }
 
     case "answer": {
@@ -585,6 +631,7 @@ function gameReducer(state: GameState, action: GameAction): GameState {
         question: newQuestion(action.category, action.clef, state.question),
         xp: state.xp + XP_PER_ANSWER,
         wrongChoice: null,
+        earned: state.earned + XP_PER_ANSWER,
       }
     }
 
@@ -597,6 +644,7 @@ function gameReducer(state: GameState, action: GameAction): GameState {
         ),
         xp: 0,
         wrongChoice: null,
+        earned: state.earned,
       }
   }
 }
@@ -605,6 +653,7 @@ function gameReducer(state: GameState, action: GameAction): GameState {
 function useGame() {
   const { clef, category } = useSettings()
   const maxScore = useMaxScore(clef, category)
+  const dailyXp = useDailyXp()
 
   // Session-only: not stored, always starts on Touch
   const [input, setInput] = useState<InputMode>(DEFAULT_INPUT)
@@ -628,6 +677,16 @@ function useGame() {
   useEffect(() => {
     if (game.xp > maxScore) writeMaxScore(clef, category, game.xp)
   }, [game.xp, maxScore, clef, category])
+
+  // Feed the daily total with whatever was newly earned. A ref remembers what
+  // has already been counted, so each XP point is added exactly once, even when
+  // several MIDI answers land in one render.
+  const countedEarned = useRef(0)
+  useEffect(() => {
+    const delta = game.earned - countedEarned.current
+    countedEarned.current = game.earned
+    if (delta > 0) addDailyXp(delta)
+  }, [game.earned])
 
   function start() {
     dispatch({ type: "start", clef, category })
@@ -668,6 +727,7 @@ function useGame() {
     clef,
     category,
     maxScore,
+    dailyXp,
     input,
     midiSupported,
     midiStatus,
@@ -897,12 +957,14 @@ function Hud({
   xp,
   maxScore,
   showBest,
+  dailyXp,
 }: {
   clef: Clef
   category: Category
   xp: number
   maxScore: number
   showBest: boolean
+  dailyXp: number
 }) {
   return (
     <section aria-label="Progress" className="flex shrink-0 flex-col gap-2">
@@ -916,6 +978,12 @@ function Hud({
           </span>
         </div>
         <div className="flex items-baseline gap-1 whitespace-nowrap text-muted-foreground">
+          {dailyXp >= DAILY_GOAL_XP && (
+            <BadgeCheckIcon
+              className="size-6 self-center text-primary"
+              aria-hidden="true"
+            />
+          )}
           <CountingNumber
             className="text-3xl font-semibold tracking-tight"
             grouping
@@ -943,11 +1011,15 @@ function Hud({
 
 function StartScreen({
   maxScore,
+  dailyXp,
   onStart,
 }: {
   maxScore: number
+  dailyXp: number
   onStart: () => void
 }) {
+  const practiced = dailyXp >= DAILY_GOAL_XP
+
   return (
     <div className="relative z-10 flex flex-col items-center gap-6">
       <div className="flex flex-col items-center gap-1 text-muted-foreground">
@@ -965,6 +1037,17 @@ function StartScreen({
         Start
       </RippleButton>
       <p className="text-muted-foreground">Name the note you see.</p>
+      {practiced ? (
+        <p className="flex items-center gap-1.5 font-medium text-primary">
+          <BadgeCheckIcon className="size-5" aria-hidden="true" />
+          Practiced today
+        </p>
+      ) : (
+        <p className="text-muted-foreground">
+          <CountingNumber grouping value={dailyXp} /> /{" "}
+          {DAILY_GOAL_XP.toLocaleString()} XP today
+        </p>
+      )}
     </div>
   )
 }
@@ -1173,6 +1256,7 @@ export default function Page() {
     clef,
     category,
     maxScore,
+    dailyXp,
     input,
     midiSupported,
     midiStatus,
@@ -1206,6 +1290,7 @@ export default function Page() {
         xp={xp}
         maxScore={maxScore}
         showBest={wrongChoice !== null}
+        dailyXp={dailyXp}
       />
 
       <div className="relative flex min-h-0 flex-1 items-center justify-center">
@@ -1213,7 +1298,7 @@ export default function Page() {
           // Draw the clef the question belongs to (matters for Grand Staff)
           <StaffView note={question.note} clef={question.clef} />
         ) : (
-          <StartScreen maxScore={maxScore} onStart={start} />
+          <StartScreen maxScore={maxScore} dailyXp={dailyXp} onStart={start} />
         )}
       </div>
 

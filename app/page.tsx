@@ -1,6 +1,13 @@
 "use client"
 
-import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react"
+import {
+  useEffect,
+  useId,
+  useReducer,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react"
 import VexFlow, { Formatter, Renderer, Stave, StaveNote, Voice } from "vexflow"
 import {
   CheckIcon,
@@ -275,16 +282,36 @@ const newQuestion = (
  *
  * Using the server snapshot during hydration is what avoids mismatches,
  * and React re-renders with the real value right after, with no effect.
+ *
+ * Resilience: every write also lands in an in-memory map. If localStorage
+ * throws (private mode, blocked cookies, sandboxed iframes), the app still
+ * works for the session; it just doesn't persist. Reads prefer the memory
+ * copy and fall back to localStorage for keys this tab hasn't touched.
  * ======================================================================== */
 
 const storeListeners = new Set<() => void>()
 
+// Session fallback + write-through cache
+const memoryStore = new Map<string, string>()
+
+const handleStorageEvent = (event: StorageEvent) => {
+  // Another tab changed a key: drop our cached copy so the fresh value wins.
+  // `event.key` is null when storage was cleared entirely.
+  if (event.key) memoryStore.delete(event.key)
+  else memoryStore.clear()
+  storeListeners.forEach((l) => l())
+}
+
 const subscribeToStorage = (listener: () => void) => {
   storeListeners.add(listener)
-  window.addEventListener("storage", listener) // changes from other tabs
+  if (storeListeners.size === 1) {
+    window.addEventListener("storage", handleStorageEvent) // changes from other tabs
+  }
   return () => {
     storeListeners.delete(listener)
-    window.removeEventListener("storage", listener)
+    if (storeListeners.size === 0) {
+      window.removeEventListener("storage", handleStorageEvent)
+    }
   }
 }
 
@@ -292,18 +319,21 @@ const subscribeToStorage = (listener: () => void) => {
 const emitStorageChange = () => storeListeners.forEach((l) => l())
 
 const readStorage = (key: string): string | null => {
+  const cached = memoryStore.get(key)
+  if (cached !== undefined) return cached
   try {
     return window.localStorage.getItem(key)
   } catch {
-    return null // Storage unavailable (private mode, etc.)
+    return null // Storage unavailable (private mode, blocked, etc.)
   }
 }
 
 const writeStorage = (key: string, value: string) => {
+  memoryStore.set(key, value) // always works, so the UI always reflects the change
   try {
     window.localStorage.setItem(key, value)
   } catch {
-    // Storage unavailable (private mode, quota, etc.): fail silently
+    // Not persisted (private mode, quota, etc.), but the session still works
   }
   emitStorageChange()
 }
@@ -497,6 +527,80 @@ function useVexFlowFonts() {
   }, [])
 }
 
+/* --- Game state: a reducer so every event sees the latest state ----------- *
+ *
+ * Touch taps are safe with plain useState because React flushes discrete
+ * events synchronously. MIDI messages are native events: two note-ons in
+ * quick succession (a chord, a fast player) can both fire before React
+ * re-renders, and each would act on the same stale `question`/`xp`.
+ * A reducer applies every action, in order, against the latest state.
+ * ------------------------------------------------------------------------- */
+
+type GameState = {
+  question: Question | null
+  xp: number
+  // Set when the user picks a wrong answer; holds the choice they clicked
+  wrongChoice: string | null
+}
+
+type GameAction =
+  | { type: "start"; clef: Clef; category: Category }
+  | { type: "answer"; selected: string; clef: Clef; category: Category }
+  | { type: "retry"; clef: Clef; category: Category }
+  | { type: "settingsChanged"; clef: Clef; category: Category }
+
+const INITIAL_GAME: GameState = { question: null, xp: 0, wrongChoice: null }
+
+// Note: newQuestion uses Math.random, so this reducer isn't strictly pure.
+// In Strict Mode dev, React may call it twice and keep one result, which is
+// harmless here (either random question is valid).
+function gameReducer(state: GameState, action: GameAction): GameState {
+  switch (action.type) {
+    case "start":
+      return {
+        question: newQuestion(action.category, action.clef),
+        xp: 0,
+        wrongChoice: null,
+      }
+
+    case "settingsChanged":
+      // Reset the run. If a session is running, swap to the new pool at once.
+      return {
+        question: state.question
+          ? newQuestion(action.category, action.clef, state.question)
+          : null,
+        xp: 0,
+        wrongChoice: null,
+      }
+
+    case "answer": {
+      // Ignore answers when there is no question or we're waiting for retry
+      if (!state.question || state.wrongChoice) return state
+
+      if (action.selected !== state.question.note) {
+        // Keep the XP on screen; the reset only happens on retry
+        return { ...state, wrongChoice: action.selected }
+      }
+      return {
+        question: newQuestion(action.category, action.clef, state.question),
+        xp: state.xp + XP_PER_ANSWER,
+        wrongChoice: null,
+      }
+    }
+
+    case "retry":
+      return {
+        question: newQuestion(
+          action.category,
+          action.clef,
+          state.question ?? undefined
+        ),
+        xp: 0,
+        wrongChoice: null,
+      }
+  }
+}
+
 /** All game state and actions. The UI components below stay dumb. */
 function useGame() {
   const { clef, category } = useSettings()
@@ -504,35 +608,40 @@ function useGame() {
 
   // Session-only: not stored, always starts on Touch
   const [input, setInput] = useState<InputMode>(DEFAULT_INPUT)
-  const [question, setQuestion] = useState<Question | null>(null)
-  const [xp, setXp] = useState(0)
-  // Set when the user picks a wrong answer; holds the choice they clicked
-  const [wrongChoice, setWrongChoice] = useState<string | null>(null)
+  const [game, dispatch] = useReducer(gameReducer, INITIAL_GAME)
 
   const midiSupported = useMidiSupported()
 
-  function start() {
-    setXp(0)
-    setWrongChoice(null)
-    setQuestion(newQuestion(category, clef))
+  // Reset the run whenever the effective settings change, whether from this
+  // tab's drawer, hydration, or another tab's `storage` event. This is the
+  // "adjust state while rendering" pattern: React discards the stale render
+  // and re-renders immediately, so no effect ever sees old XP paired with
+  // new settings.
+  const settingsKey = `${clef}:${category}`
+  const [syncedKey, setSyncedKey] = useState(settingsKey)
+  if (syncedKey !== settingsKey) {
+    setSyncedKey(settingsKey)
+    dispatch({ type: "settingsChanged", clef, category })
   }
 
+  // Persist the best score. Only ever writes when the run beats the stored max.
+  useEffect(() => {
+    if (game.xp > maxScore) writeMaxScore(clef, category, game.xp)
+  }, [game.xp, maxScore, clef, category])
+
+  function start() {
+    dispatch({ type: "start", clef, category })
+  }
+
+  // Changing a setting only writes it; the settingsKey sync above resets the run
   function changeClef(next: Clef) {
     if (next === clef) return
     writeSettings(next, category)
-    setXp(0)
-    setWrongChoice(null)
-    // If a session is already running, switch to the new clef immediately
-    if (question) setQuestion(newQuestion(category, next, question))
   }
 
   function changeCategory(next: Category) {
     if (next === category) return
     writeSettings(clef, next)
-    setXp(0)
-    setWrongChoice(null)
-    // If a session is already running, switch to the new pool immediately
-    if (question) setQuestion(newQuestion(next, clef, question))
   }
 
   // Switching input never touches XP, the question, or stored settings
@@ -541,24 +650,11 @@ function useGame() {
   }
 
   function answer(selected: string) {
-    if (!question || wrongChoice) return
-    if (selected === question.note) {
-      const nextXp = xp + XP_PER_ANSWER
-      setXp(nextXp)
-      // Only ever store the score when it beats the stored max
-      if (nextXp > maxScore) writeMaxScore(clef, category, nextXp)
-      setQuestion(newQuestion(category, clef, question))
-    } else {
-      // Wrong answer: keep the XP on screen and reveal the best score.
-      // The reset to 0 only happens when the user hits retry.
-      setWrongChoice(selected)
-    }
+    dispatch({ type: "answer", selected, clef, category })
   }
 
   function retry() {
-    setWrongChoice(null)
-    setXp(0)
-    setQuestion(newQuestion(category, clef, question ?? undefined))
+    dispatch({ type: "retry", clef, category })
   }
 
   // A MIDI key press is just another way to call `answer`.
@@ -575,9 +671,9 @@ function useGame() {
     input,
     midiSupported,
     midiStatus,
-    question,
-    xp,
-    wrongChoice,
+    question: game.question,
+    xp: game.xp,
+    wrongChoice: game.wrongChoice,
     start,
     changeClef,
     changeCategory,

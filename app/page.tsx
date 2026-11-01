@@ -1,8 +1,14 @@
 "use client"
 
-import { useEffect, useRef, useState, useSyncExternalStore } from "react"
+import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react"
 import VexFlow, { Formatter, Renderer, Stave, StaveNote, Voice } from "vexflow"
-import { CheckIcon, RotateCcwIcon, SettingsIcon } from "lucide-react"
+import {
+  CheckIcon,
+  EighthNoteIcon,
+  MidiPortIcon,
+  RotateCcwIcon,
+  SettingsIcon,
+} from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { CountingNumber } from "@/components/ui/counting-number"
 import {
@@ -201,6 +207,18 @@ const notePool = (category: Category, clef: StaffClef) => {
     .map((n) => n.key)
 }
 
+/* --- Input: how the user answers ------------------------------------------ */
+
+/** Not persisted: always starts as "touch" because MIDI depends on permissions. */
+type InputMode = "touch" | "midi"
+
+const INPUT_OPTIONS: { value: InputMode; label: string }[] = [
+  { value: "touch", label: "Touch" },
+  { value: "midi", label: "MIDI" },
+]
+
+const DEFAULT_INPUT: InputMode = "touch"
+
 /* ==========================================================================
  * 3. QUESTIONS
  * ======================================================================== */
@@ -292,7 +310,7 @@ const writeStorage = (key: string, value: string) => {
 
 /* --- Keys & (de)serialization ------------------------------------------- */
 
-// Max score: one key per clef + category
+// Max score: one key per clef + category (shared by Touch and MIDI)
 const maxScoreKey = (clef: Clef, category: Category) =>
   `app@meloetta:${clef}:${category}`
 
@@ -321,7 +339,130 @@ const writeMaxScore = (clef: Clef, category: Category, score: number) =>
   writeStorage(maxScoreKey(clef, category), String(score))
 
 /* ==========================================================================
- * 5. HOOKS
+ * 5. MIDI
+ *
+ * Status lifecycle (only while MIDI is the selected input):
+ *   pending    -> waiting for the browser's permission / first device scan
+ *   no-device  -> access granted, nothing plugged in yet (not an error)
+ *   connected  -> at least one input device is connected
+ *   error      -> permission denied, request failed, or device lost mid-session
+ * ======================================================================== */
+
+type MidiStatus = "off" | "pending" | "connected" | "no-device" | "error"
+
+const MIDI_STATUS_TEXT: Record<MidiStatus, string | null> = {
+  off: null,
+  pending: "Connecting…",
+  connected: "Device connected",
+  "no-device": "No device connected",
+  error: "Couldn't connect to MIDI",
+}
+
+// MIDI pitch class -> natural note letter. Sharps/flats are intentionally
+// absent: they have no entry, so they are ignored.
+const NATURAL_LETTERS: Record<number, string> = {
+  0: "c",
+  2: "d",
+  4: "e",
+  5: "f",
+  7: "g",
+  9: "a",
+  11: "b",
+}
+
+/** 60 -> "c/4" (Middle C). Returns null for black keys. */
+const midiToKey = (midi: number) => {
+  const letter = NATURAL_LETTERS[midi % 12]
+  return letter ? `${letter}/${Math.floor(midi / 12) - 1}` : null
+}
+
+const NOTE_ON = 0x90
+
+const noopSubscribe = () => () => {}
+
+/** Whether this browser exposes the Web MIDI API. False on the server. */
+function useMidiSupported() {
+  return useSyncExternalStore(
+    noopSubscribe,
+    () => "requestMIDIAccess" in navigator,
+    () => false
+  )
+}
+
+/**
+ * Requests MIDI access while `enabled`, listens for note-on messages, and
+ * reports the connection status. Everything is torn down when disabled.
+ */
+function useMidi(enabled: boolean, onNote: (midi: number) => void) {
+  const [status, setStatus] = useState<MidiStatus>("pending")
+
+  // Always call the latest handler without re-subscribing to MIDI
+  const onNoteRef = useRef(onNote)
+  useEffect(() => {
+    onNoteRef.current = onNote
+  })
+
+  useEffect(() => {
+    if (!enabled) return
+
+    let cancelled = false
+    let access: MIDIAccess | null = null
+    let hadDevice = false
+
+    const handleMessage = (event: MIDIMessageEvent) => {
+      const data = event.data
+      if (!data) return
+      const [command, note, velocity] = data
+      // Note-on (any channel). Velocity 0 is a note-off in disguise.
+      if ((command & 0xf0) === NOTE_ON && velocity > 0) onNoteRef.current(note)
+    }
+
+    // Re-run on connect/disconnect: attach listeners and recompute status
+    const sync = () => {
+      if (!access) return
+      let connected = 0
+      access.inputs.forEach((input) => {
+        input.onmidimessage = handleMessage
+        if (input.state === "connected") connected++
+      })
+      if (connected > 0) {
+        hadDevice = true
+        setStatus("connected")
+      } else {
+        // Losing a device we already had is an error; never having one is not
+        setStatus(hadDevice ? "error" : "no-device")
+      }
+    }
+
+    navigator
+      .requestMIDIAccess()
+      .then((result) => {
+        if (cancelled) return
+        access = result
+        access.onstatechange = sync
+        sync()
+      })
+      .catch(() => {
+        if (!cancelled) setStatus("error")
+      })
+
+    return () => {
+      cancelled = true
+      if (access) {
+        access.onstatechange = null
+        access.inputs.forEach((input) => {
+          input.onmidimessage = null
+        })
+      }
+      setStatus("pending")
+    }
+  }, [enabled])
+
+  return enabled ? status : "off"
+}
+
+/* ==========================================================================
+ * 6. HOOKS
  * ======================================================================== */
 
 /** Last-used clef + category. Falls back to defaults on server/hydration. */
@@ -361,10 +502,14 @@ function useGame() {
   const { clef, category } = useSettings()
   const maxScore = useMaxScore(clef, category)
 
+  // Session-only: not stored, always starts on Touch
+  const [input, setInput] = useState<InputMode>(DEFAULT_INPUT)
   const [question, setQuestion] = useState<Question | null>(null)
   const [xp, setXp] = useState(0)
   // Set when the user picks a wrong answer; holds the choice they clicked
   const [wrongChoice, setWrongChoice] = useState<string | null>(null)
+
+  const midiSupported = useMidiSupported()
 
   function start() {
     setXp(0)
@@ -390,6 +535,11 @@ function useGame() {
     if (question) setQuestion(newQuestion(next, clef, question))
   }
 
+  // Switching input never touches XP, the question, or stored settings
+  function changeInput(next: InputMode) {
+    setInput(next)
+  }
+
   function answer(selected: string) {
     if (!question || wrongChoice) return
     if (selected === question.note) {
@@ -411,55 +561,89 @@ function useGame() {
     setQuestion(newQuestion(category, clef, question ?? undefined))
   }
 
+  // A MIDI key press is just another way to call `answer`.
+  // Black keys have no matching key, so they're ignored.
+  const midiStatus = useMidi(input === "midi", (midi) => {
+    const key = midiToKey(midi)
+    if (key) answer(key)
+  })
+
   return {
     clef,
     category,
     maxScore,
+    input,
+    midiSupported,
+    midiStatus,
     question,
     xp,
     wrongChoice,
     start,
     changeClef,
     changeCategory,
+    changeInput,
     answer,
     retry,
   }
 }
 
 /* ==========================================================================
- * 6. COMPONENTS
+ * 7. COMPONENTS
  * ======================================================================== */
 
 /* --- Shared: a selectable row used in the settings drawer ---------------- */
 
+const HINT_TONES = {
+  muted: "text-muted-foreground",
+  ok: "text-primary",
+  error: "text-destructive",
+} as const
+
 function OptionButton({
   label,
   selected,
+  disabled,
+  hint,
+  hintTone = "muted",
   onSelect,
 }: {
   label: string
   selected: boolean
+  disabled?: boolean
+  hint?: string | null
+  hintTone?: keyof typeof HINT_TONES
   onSelect: () => void
 }) {
+  const hintId = useId()
+
   return (
-    <Button
-      role="radio"
-      aria-checked={selected}
-      variant="outline"
-      className={cn(
-        "h-12 w-full justify-between rounded-xl px-4 text-base",
-        selected && "border-primary bg-accent"
+    <div className="flex flex-col gap-1">
+      <Button
+        role="radio"
+        aria-checked={selected}
+        aria-describedby={hint ? hintId : undefined}
+        disabled={disabled}
+        variant="outline"
+        className={cn(
+          "h-12 w-full justify-between rounded-xl px-4 text-base",
+          selected && "border-primary bg-accent"
+        )}
+        onClick={onSelect}
+      >
+        {label}
+        {selected && (
+          <CheckIcon
+            aria-hidden="true"
+            className="size-5 text-primary-foreground"
+          />
+        )}
+      </Button>
+      {hint && (
+        <p id={hintId} className={cn("px-1 text-sm", HINT_TONES[hintTone])}>
+          {hint}
+        </p>
       )}
-      onClick={onSelect}
-    >
-      {label}
-      {selected && (
-        <CheckIcon
-          aria-hidden="true"
-          className="size-5 text-primary-foreground"
-        />
-      )}
-    </Button>
+    </div>
   )
 }
 
@@ -468,14 +652,32 @@ function OptionButton({
 function SettingsDrawer({
   clef,
   category,
+  input,
+  midiSupported,
+  midiStatus,
   onClefChange,
   onCategoryChange,
+  onInputChange,
 }: {
   clef: Clef
   category: Category
+  input: InputMode
+  midiSupported: boolean
+  midiStatus: MidiStatus
   onClefChange: (clef: Clef) => void
   onCategoryChange: (category: Category) => void
+  onInputChange: (input: InputMode) => void
 }) {
+  const midiHint = midiSupported
+    ? MIDI_STATUS_TEXT[midiStatus]
+    : "Not supported in this browser"
+  const midiHintTone =
+    midiStatus === "error"
+      ? "error"
+      : midiStatus === "connected"
+        ? "ok"
+        : "muted"
+
   return (
     <Drawer showSwipeHandle>
       <DrawerTrigger
@@ -494,11 +696,37 @@ function SettingsDrawer({
         <DrawerHeader className="pb-2">
           <DrawerTitle className="text-xl">Practice set</DrawerTitle>
           <DrawerDescription>
-            Choose a clef and which notes you see.
+            Choose how you answer, a clef, and which notes you see.
           </DrawerDescription>
         </DrawerHeader>
         <div className="flex-1 overflow-y-auto p-4">
           <div className="flex flex-col gap-5 px-4 pt-2 pb-[max(2rem,env(safe-area-inset-bottom))]">
+            <section>
+              <h3 className="mb-2 px-1 text-sm font-medium text-muted-foreground">
+                Input
+              </h3>
+              <div
+                role="radiogroup"
+                aria-label="Input"
+                className="flex flex-col gap-1.5"
+              >
+                {INPUT_OPTIONS.map((opt) => {
+                  const isMidi = opt.value === "midi"
+                  return (
+                    <OptionButton
+                      key={opt.value}
+                      label={opt.label}
+                      selected={opt.value === input}
+                      disabled={isMidi && !midiSupported}
+                      hint={isMidi ? midiHint : null}
+                      hintTone={isMidi ? midiHintTone : undefined}
+                      onSelect={() => onInputChange(opt.value)}
+                    />
+                  )
+                })}
+              </div>
+            </section>
+
             <section>
               <h3 className="mb-2 px-1 text-sm font-medium text-muted-foreground">
                 Clef
@@ -554,7 +782,10 @@ function SettingsDrawer({
 function Header(props: React.ComponentProps<typeof SettingsDrawer>) {
   return (
     <header className="flex shrink-0 items-center justify-between gap-3 pb-4">
-      <h1 className="text-2xl font-semibold tracking-tight text-foreground underline decoration-primary decoration-wavy decoration-2 underline-offset-4">
+      <h1
+        onClick={() => window.location.reload()}
+        className="cursor-pointer text-2xl font-semibold tracking-tight text-foreground underline decoration-primary decoration-wavy decoration-2 underline-offset-4"
+      >
         Meloetta
       </h1>
       <SettingsDrawer {...props} />
@@ -688,7 +919,7 @@ function StaffView({ note, clef }: { note: string; clef: StaffClef }) {
   )
 }
 
-/* --- Answer buttons -------------------------------------------------------- */
+/* --- Answer buttons (Touch) ------------------------------------------------ */
 
 function AnswerChoices({
   question,
@@ -749,8 +980,94 @@ function AnswerChoices({
   )
 }
 
+/* --- MIDI controls --------------------------------------------------------- */
+
+/**
+ * Replaces the Touch buttons in MIDI mode.
+ *  - Left:  eighth note. After a wrong key it shows the correct answer.
+ *  - Right: MIDI port. Doubles as connection status and (after a wrong key)
+ *           the retry button. It's only interactive as the retry button.
+ */
+function MidiControls({
+  question,
+  wrongChoice,
+  status,
+  onRetry,
+}: {
+  question: Question | null
+  wrongChoice: string | null
+  status: MidiStatus
+  onRetry: () => void
+}) {
+  const isRetry = wrongChoice !== null
+  const isError = status === "error"
+  const isConnected = status === "connected"
+  const correct = isRetry && question ? question.note : null
+
+  return (
+    <div className="grid grid-cols-2 gap-3">
+      <RippleButton
+        size="lg"
+        variant="outline"
+        tabIndex={-1}
+        aria-label={
+          correct
+            ? `Correct answer: ${letterOf(correct)}, octave ${octaveOf(correct)}`
+            : "Play the note on your MIDI keyboard"
+        }
+        className={cn(
+          "pointer-events-none h-20 border-2 px-0",
+          correct && "border-primary bg-primary/10"
+        )}
+      >
+        {correct ? (
+          <span className="flex items-baseline gap-0.5">
+            <span className="text-4xl font-semibold">{letterOf(correct)}</span>
+            <span className="font-medium opacity-60">{octaveOf(correct)}</span>
+          </span>
+        ) : (
+          <EighthNoteIcon
+            className="size-7 text-muted-foreground"
+            aria-hidden="true"
+          />
+        )}
+      </RippleButton>
+
+      <RippleButton
+        size="lg"
+        variant={isRetry || isError ? "destructive" : "outline"}
+        tabIndex={isRetry ? undefined : -1}
+        aria-label={isRetry ? "Try again" : (MIDI_STATUS_TEXT[status] ?? "")}
+        onClick={isRetry ? onRetry : undefined}
+        className={cn(
+          "h-20 border-2 px-0",
+          isRetry
+            ? "border-destructive/20 active:scale-95"
+            : "pointer-events-none",
+          isError && "border-destructive/20",
+          isConnected &&
+            !isRetry &&
+            "border-primary/30 bg-primary/10 text-primary"
+        )}
+      >
+        {isRetry ? (
+          <RotateCcwIcon className="size-7" aria-hidden="true" />
+        ) : (
+          <MidiPortIcon
+            className={cn(
+              "size-7",
+              !isConnected && !isError && "text-muted-foreground"
+            )}
+            aria-hidden="true"
+          />
+        )}
+      </RippleButton>
+    </div>
+  )
+}
+
 /* ==========================================================================
- * 7. PAGE
+ * 8. PAGE
  * ======================================================================== */
 
 export default function Page() {
@@ -760,12 +1077,16 @@ export default function Page() {
     clef,
     category,
     maxScore,
+    input,
+    midiSupported,
+    midiStatus,
     question,
     xp,
     wrongChoice,
     start,
     changeClef,
     changeCategory,
+    changeInput,
     answer,
     retry,
   } = useGame()
@@ -775,8 +1096,12 @@ export default function Page() {
       <Header
         clef={clef}
         category={category}
+        input={input}
+        midiSupported={midiSupported}
+        midiStatus={midiStatus}
         onClefChange={changeClef}
         onCategoryChange={changeCategory}
+        onInputChange={changeInput}
       />
 
       <Hud
@@ -797,13 +1122,24 @@ export default function Page() {
       </div>
 
       <div className="min-h-20 shrink-0 [@media(max-height:700px)]:min-h-16">
-        {question && (
-          <AnswerChoices
+        {input === "midi" ? (
+          // Always shown in MIDI mode so the connection status is visible
+          // even before the game starts
+          <MidiControls
             question={question}
             wrongChoice={wrongChoice}
-            onAnswer={answer}
+            status={midiStatus}
             onRetry={retry}
           />
+        ) : (
+          question && (
+            <AnswerChoices
+              question={question}
+              wrongChoice={wrongChoice}
+              onAnswer={answer}
+              onRetry={retry}
+            />
+          )
         )}
       </div>
     </main>

@@ -117,9 +117,9 @@ const GUIDE_KEYS: Record<StaffClef, string[]> = {
 }
 
 const CLEF_OPTIONS: { value: Clef; label: string; short: string }[] = [
+  { value: "grand", label: "Grand Staff", short: "Grand Staff" },
   { value: "treble", label: "Treble clef", short: "Treble" },
   { value: "bass", label: "Bass clef", short: "Bass" },
-  { value: "grand", label: "Grand Staff", short: "Grand Staff" },
 ]
 
 type Category =

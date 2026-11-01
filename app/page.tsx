@@ -31,7 +31,11 @@ const STAFF_HEIGHT = 150
  * 2. DOMAIN: clefs, notes, practice options
  * ======================================================================== */
 
-type Clef = "treble" | "bass"
+/** A clef that VexFlow can actually draw. */
+type StaffClef = "treble" | "bass"
+
+/** What the user selects. "grand" alternates between treble and bass. */
+type Clef = StaffClef | "grand"
 
 type Note = {
   key: string // VexFlow key, e.g. "e/4"
@@ -100,23 +104,32 @@ const NOTES_BASS: Note[] = [
   { key: "b/4", region: "above", position: "line" }, // 4th ledger line
 ]
 
-const NOTES_BY_CLEF: Record<Clef, Note[]> = {
+const NOTES_BY_CLEF: Record<StaffClef, Note[]> = {
   treble: NOTES_TREBLE,
   bass: NOTES_BASS,
+}
+
+// "Guide notes": a few anchor notes per clef (clef-specific, so not derived
+// from region/position)
+const GUIDE_KEYS: Record<StaffClef, string[]> = {
+  treble: ["c/4", "g/4", "c/5", "f/5"], // C4, G4, C5, F5
+  bass: ["g/2", "c/3", "f/3", "c/4"], // G2, C3, F3, C4
 }
 
 const CLEF_OPTIONS: { value: Clef; label: string; short: string }[] = [
   { value: "treble", label: "Treble clef", short: "Treble" },
   { value: "bass", label: "Bass clef", short: "Bass" },
+  { value: "grand", label: "Grand Staff", short: "Grand Staff" },
 ]
 
 type Category =
-  "all" | "staff" | "below_staff" | "above_staff" | "lines" | "spaces"
+  "all" | "staff" | "below_staff" | "above_staff" | "lines" | "spaces" | "guide"
 
 type PracticeOption = {
   value: Category
   label: string
-  match: (note: Note) => boolean
+  // `clef` is the staff clef the note belongs to (never "grand")
+  match: (note: Note, clef: StaffClef) => boolean
 }
 
 const PRACTICE_GROUPS: { label: string; options: PracticeOption[] }[] = [
@@ -145,6 +158,11 @@ const PRACTICE_GROUPS: { label: string; options: PracticeOption[] }[] = [
     label: "Beginner",
     options: [
       {
+        value: "guide",
+        label: "Guide notes",
+        match: (n, clef) => GUIDE_KEYS[clef].includes(n.key),
+      },
+      {
         value: "lines",
         label: "Staff lines only",
         match: (n) => n.region === "staff" && n.position === "line",
@@ -160,7 +178,7 @@ const PRACTICE_GROUPS: { label: string; options: PracticeOption[] }[] = [
 
 const ALL_OPTIONS = PRACTICE_GROUPS.flatMap((g) => g.options)
 
-const DEFAULT_CLEF: Clef = "treble"
+const DEFAULT_CLEF: Clef = "grand"
 const DEFAULT_CATEGORY: Category = "all"
 
 const isClef = (value: string | undefined): value is Clef =>
@@ -175,11 +193,11 @@ const clefShortLabel = (clef: Clef) =>
 const categoryLabel = (category: Category) =>
   ALL_OPTIONS.find((o) => o.value === category)?.label ?? ""
 
-/** All VexFlow keys available for a given clef + practice category. */
-const notePool = (category: Category, clef: Clef) => {
+/** All VexFlow keys available for a given staff clef + practice category. */
+const notePool = (category: Category, clef: StaffClef) => {
   const option = ALL_OPTIONS.find((o) => o.value === category)
   return NOTES_BY_CLEF[clef]
-    .filter(option?.match ?? (() => true))
+    .filter((n) => (option ? option.match(n, clef) : true))
     .map((n) => n.key)
 }
 
@@ -187,7 +205,8 @@ const notePool = (category: Category, clef: Clef) => {
  * 3. QUESTIONS
  * ======================================================================== */
 
-type Question = { note: string; choices: string[] }
+// `clef` is the staff actually shown for this question (never "grand")
+type Question = { note: string; clef: StaffClef; choices: string[] }
 
 /** "e/5" -> "E" */
 const letterOf = (key: string) => key[0].toUpperCase()
@@ -206,13 +225,21 @@ const shuffle = <T,>(items: T[]) => {
 const newQuestion = (
   category: Category,
   clef: Clef,
-  previous?: string
+  previous?: Question
 ): Question => {
-  const pool = notePool(category, clef)
-  const candidates = pool.filter((n) => n !== previous)
+  // Grand Staff: pick treble or bass 50/50 for each question
+  const staffClef: StaffClef =
+    clef === "grand" ? (Math.random() < 0.5 ? "treble" : "bass") : clef
+
+  const pool = notePool(category, staffClef)
+  // Avoid the exact same clef + note back-to-back
+  const candidates = pool.filter(
+    (n) => !(previous?.clef === staffClef && previous.note === n)
+  )
   const note = candidates[Math.floor(Math.random() * candidates.length)]
   return {
     note,
+    clef: staffClef,
     choices: shuffle([
       note,
       ...shuffle(pool.filter((n) => n !== note)).slice(0, 2),
@@ -351,7 +378,7 @@ function useGame() {
     setXp(0)
     setWrongChoice(null)
     // If a session is already running, switch to the new clef immediately
-    if (question) setQuestion(newQuestion(category, next, question.note))
+    if (question) setQuestion(newQuestion(category, next, question))
   }
 
   function changeCategory(next: Category) {
@@ -360,7 +387,7 @@ function useGame() {
     setXp(0)
     setWrongChoice(null)
     // If a session is already running, switch to the new pool immediately
-    if (question) setQuestion(newQuestion(next, clef, question.note))
+    if (question) setQuestion(newQuestion(next, clef, question))
   }
 
   function answer(selected: string) {
@@ -370,7 +397,7 @@ function useGame() {
       setXp(nextXp)
       // Only ever store the score when it beats the stored max
       if (nextXp > maxScore) writeMaxScore(clef, category, nextXp)
-      setQuestion(newQuestion(category, clef, question.note))
+      setQuestion(newQuestion(category, clef, question))
     } else {
       // Wrong answer: keep the XP on screen and reveal the best score.
       // The reset to 0 only happens when the user hits retry.
@@ -381,7 +408,7 @@ function useGame() {
   function retry() {
     setWrongChoice(null)
     setXp(0)
-    setQuestion(newQuestion(category, clef, question?.note))
+    setQuestion(newQuestion(category, clef, question ?? undefined))
   }
 
   return {
@@ -617,7 +644,7 @@ function StartScreen({
 
 /* --- Staff: renders a single note with VexFlow ---------------------------- */
 
-function StaffView({ note, clef }: { note: string; clef: Clef }) {
+function StaffView({ note, clef }: { note: string; clef: StaffClef }) {
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -762,7 +789,8 @@ export default function Page() {
 
       <div className="relative flex min-h-0 flex-1 items-center justify-center">
         {question ? (
-          <StaffView note={question.note} clef={clef} />
+          // Draw the clef the question belongs to (matters for Grand Staff)
+          <StaffView note={question.note} clef={question.clef} />
         ) : (
           <StartScreen maxScore={maxScore} onStart={start} />
         )}
